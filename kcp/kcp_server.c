@@ -12,10 +12,12 @@
 
 #include<sys/socket.h>
 #include<sys/errno.h>
+#include<sys/types.h>
 #include<netinet/in.h>
 #include<arpa/inet.h>
 #include<sys/time.h>
 #include<unistd.h>
+#include<netdb.h>
 
 #include<thread>
 #include<vector>
@@ -169,17 +171,37 @@ int main(int argc, char *argv[])
     task key;
     key.socketfd = sockfd;
     vector<task>::iterator it;
+    int offset = 0;
+
+    const int MAXHOST = 64;
+    char host[MAXHOST];
+    char serv[MAXHOST];
     while(1)
     {
         //memset(peer_addr, 0x00, sizeof(peer_addr));
-        iTransport = recvfrom(sockfd, szMsg, iMsgSize, 0, (struct sockaddr* )&peer_addr, &peer_len);
+        iTransport = recvfrom(sockfd, szMsg + offset, iMsgSize - offset, 0, (struct sockaddr* )&peer_addr, &peer_len);
         if(iTransport < 0)
         {
             printf("erron: %d \n", errno);
             continue;
         }else 
         {
-            key.name = peer_addr.sin_addr.s_addr;
+            int nRet = getnameinfo((struct sockaddr*)&peer_addr, peer_len, 
+                    host, sizeof(host), 
+                    serv, sizeof(serv),
+                    NI_NUMERICHOST | NI_DGRAM);
+            if(nRet)
+            {
+                printf("get name info error: %s\n", strerror(errno));
+                continue;
+            }
+
+            key.name = host;
+            key.name += serv;
+            //key.name = host + serv;
+
+            //key.name = inet_ntoa(peer_addr.sin_addr) + itoa(peer_addr.sin_port);
+
             memcpy(&key.addr, &peer_addr, peer_len);
             key.addr_len = peer_len;
         }
@@ -209,16 +231,44 @@ int main(int argc, char *argv[])
 
         if(nRet < 0)
         {
-            printf("ikcp_input error: %d\n", nRet);
-        }else 
+            if(nRet == -1)
+            {
+                if(iMsgSize < 24)
+                {
+                    printf("udp recieve buffer is too small to recieve any data\n");
+                    break;
+                }else 
+                {
+                    offset += iTransport;
+                    continue;
+                }
+            }else if(nRet == -2)
+            {
+                printf("ikcp_input error: %d\n", nRet);
+                //offset = iTransport % 这里不好确定到底放入了多少数据到缓冲区去了。
+            }else   //-3
+            {
+                printf("ikcp_input error: %d\n", nRet);
+                continue;
+            }
+        }
+        //else //return -2 时也需要接收数据。
         {
+            offset = 0;
+
             printf("ikcp_input data: %d\n", iTransport);
 
             int size = ikcp_peeksize(key.kcp);
+            if(size <= 0)
+            {
+                printf("there is no data in the rcv_queue\n");
+                continue;
+            }
             char* bigbuffer = (char*)malloc(size);
             nRet = ikcp_recv(key.kcp, bigbuffer, size);
             if(nRet < 0)
             {
+                printf("ikcp_recv error: %d\n", nRet);
                 continue;
             }
 
@@ -233,52 +283,6 @@ int main(int argc, char *argv[])
             }
 
             free(bigbuffer);
-            continue;   //不用后面的代码。
-
-
-
-            if((nRet = ikcp_recv(key.kcp, szMsg, iMsgSize)) < 0)
-            {
-                if(nRet == -2)
-                {
-                    printf("reciev a error kudp package: %d\n", nRet);
-                    kudp_msleep(1000);
-
-                    continue;   //接收不到数据可能是接收队列没有数据，也可能是没有一个完整的数据。此时应该继续接收数据。
-                }else if(nRet == -3)
-                {
-                    int size = ikcp_peeksize(key.kcp);
-                    char* bigbuffer = (char*)malloc(size);
-
-                    nRet = ikcp_recv(key.kcp, bigbuffer, size);
-                    if(nRet < 0)
-                    {
-                        printf("bad package, maybe the kcp is wrong!\n");
-                    } 
-                }
-
-            }
-            /*
-            while((nRet = ikcp_recv(key.kcp, szMsg, iMsgSize)) < 0)
-            {
-                printf("reciev a error kudp package: %d\n", nRet);
-                kudp_msleep(1000);
-                continue;
-            }
-            */
-            else 
-            {
-                printf("recv a kudp package: %d\n", iMsgSize);
-            }
-
-            //回显
-            while((nRet = ikcp_send(key.kcp, szMsg, iMsgSize)) < 0)
-            {
-                printf("send a error kudp package\n");
-                continue;
-            }
-
-            printf("send a kudp package\n");
         }
 
     }
