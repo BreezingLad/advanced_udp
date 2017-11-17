@@ -150,7 +150,8 @@ int main(int argc, char *argv[])
         iPort = atoi(argv[3]);
     }
 
-    char* szMsg = (char*)malloc(sizeof(char) * iMsgSize);
+    const int MsgLen    = iMsgSize + 64;
+    char* szMsg = (char*)malloc(sizeof(char) * MsgLen);
 
     struct sockaddr_in server;
     memset(&server, 0x00, sizeof(server));
@@ -185,6 +186,8 @@ int main(int argc, char *argv[])
     tasklist.insert(tasklist.end(), key);
 
     std::thread t(kudp);
+    t.detach();
+
     while(1)
     {     
         //回显
@@ -194,12 +197,10 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        printf("send success : %d\n", nRet);
 
-        //memset(peer_addr, 0x00, sizeof(peer_addr));
         do
         {
-            iTransport = recvfrom(sockfd, szMsg, iMsgSize, 0, (struct sockaddr* )&peer_addr, &peer_len);
+            iTransport = recvfrom(sockfd, szMsg, MsgLen, 0, (struct sockaddr* )&peer_addr, &peer_len);
             if(iTransport < 0)
             {
                 printf("erron: %d \n", errno);
@@ -211,19 +212,23 @@ int main(int argc, char *argv[])
                 nRet = ikcp_input(key.kcp, szMsg, iTransport);
                 if(nRet < 0)
                 {
+                    printf("ikcp_input error: %d", nRet);
                     continue;
                 }else
                 {
-                    if((nRet = ikcp_recv(key.kcp, szMsg, iMsgSize)) < 0)
+                    if((nRet = ikcp_recv(key.kcp, szMsg, MsgLen)) < 0)
                     {
+                        printf("ikcp_recv error %d\n", nRet);
                         continue;
                     }
                     printf("ikcp_recv: %d\n",nRet);
+                    iMsgSize -= nRet;
                 }
             }
 
-        }while(iTransport < iMsgSize);
+        }while(iMsgSize);
        
+        isalive = 0;
         break; 
     }
 
